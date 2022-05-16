@@ -19,6 +19,7 @@ pipeline {
         DEPLOYEMENT_HOST = credentials('DEPLOYEMENT_HOST')
         DEPLOYEMENT_USER = credentials('DEPLOYEMENT_USER')
         AWS_REMOTE_ENVIROMENT = "export AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID} ; export AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY} ; export AWS_DEFAULT_REGION=${AWS_DEFAULT_REGION} ;"
+        APPLICATION_NAME = credentials('APPLICATION_NAME')
     }
     stages {
         stage('Cloning deployement repository') {
@@ -67,11 +68,27 @@ pipeline {
             }
         }
 
+        stage('Remove current deployment') {
+            steps{
+                script{
+                    CURRENT_DEPLOYMENT = sh(
+                            script: "ssh -o StrictHostKeyChecking=no ${DEPLOYEMENT_USER}@${DEPLOYEMENT_HOST}  -tt ' sudo docker ps -aqf name=${APPLICATION_NAME} '",
+                            encoding: "UTF-8",
+                            returnStdout: true
+                            ).trim()
+                    if ( CURRENT_DEPLOYMENT!= null && CURRENT_DEPLOYMENT!= "") {
+                        sh "ssh -o StrictHostKeyChecking=no ${DEPLOYEMENT_USER}@${DEPLOYEMENT_HOST}  -tt 'sudo docker rm -f ${APPLICATION_NAME}'"
+                    }
+
+                }
+            }
+        }
+
         stage('Deploy latest image') {
             steps {
                 script{
                     sshagent([DEPLOYEMNT_SERVER_CREDENTIAL_ID]) {
-                        if (sh(script: "ssh -o StrictHostKeyChecking=no ${DEPLOYEMENT_USER}@${DEPLOYEMENT_HOST}  -tt 'sudo docker run -p 9000:8080 -d ${ABSOLUTE_LATEST_BUILD_IMAGE_NAME}'",
+                        if (sh(script: "ssh -o StrictHostKeyChecking=no ${DEPLOYEMENT_USER}@${DEPLOYEMENT_HOST}  -tt 'sudo docker run -p 9000:8080 -d --name ${APPLICATION_NAME} ${ABSOLUTE_LATEST_BUILD_IMAGE_NAME}'",
                             returnStatus: true
                         ).equals(0)) {
                             echo 'Deployment successful'
