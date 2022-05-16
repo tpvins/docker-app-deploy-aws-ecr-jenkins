@@ -37,6 +37,16 @@ pipeline {
             }
         }
 
+        stage('Deploy image to AWS ECR') {
+            steps{
+                script {
+                    docker.withRegistry( AWS_ECR_URI, AWS_ECR_CREDS_URI ) {
+                        LATEST_BUILD_IMAGE.push()
+                    }
+                }
+            }
+        }
+
         stage('Docker login on deployment server') {
             steps {
                 script {
