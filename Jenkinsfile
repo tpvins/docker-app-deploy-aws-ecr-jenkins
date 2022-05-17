@@ -81,13 +81,15 @@ pipeline {
         stage('Remove current deployment') {
             steps{
                 script{
-                    CURRENT_DEPLOYMENT = sh(
-                            script: "ssh -o StrictHostKeyChecking=no ${DEPLOYEMENT_USER}@${DEPLOYEMENT_HOST}  -tt ' sudo docker ps -aqf name=${APPLICATION_NAME} '",
-                            encoding: "UTF-8",
-                            returnStdout: true
-                            ).trim()
-                    if ( CURRENT_DEPLOYMENT!= null && CURRENT_DEPLOYMENT!= "") {
-                        sh "ssh -o StrictHostKeyChecking=no ${DEPLOYEMENT_USER}@${DEPLOYEMENT_HOST}  -tt 'sudo docker rm -f ${APPLICATION_NAME}'"
+                    sshagent([DEPLOYEMNT_SERVER_CREDENTIAL_ID]) {
+                        CURRENT_DEPLOYMENT = sh(
+                                script: "ssh -o StrictHostKeyChecking=no ${DEPLOYEMENT_USER}@${DEPLOYEMENT_HOST}  -tt ' sudo docker ps -aqf name=${APPLICATION_NAME} '",
+                                encoding: "UTF-8",
+                                returnStdout: true
+                                ).trim()
+                        if ( CURRENT_DEPLOYMENT!= null && CURRENT_DEPLOYMENT!= "") {
+                            sh "ssh -o StrictHostKeyChecking=no ${DEPLOYEMENT_USER}@${DEPLOYEMENT_HOST}  -tt 'sudo docker rm -f ${APPLICATION_NAME}'"
+                        }
                     }
 
                 }
