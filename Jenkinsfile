@@ -116,6 +116,7 @@ pipeline {
     post {
         always {
             cleanWs()
+            sh 'sudo yes | docker system prune --all'
         }
     }
 }
