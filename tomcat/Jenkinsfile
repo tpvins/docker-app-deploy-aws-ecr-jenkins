@@ -1,0 +1,110 @@
+pipeline {
+    agent any
+    environment {
+        DEPLOYMENT_REPO_CRED_ID = 'MY_SVN_CRED_ID'
+        DEPLOYMENT_REPO = credentials('DEPLOYMENT_REPO')
+        DEPLOYMENT_BRANCH = credentials('DEPLOYMENT_BRANCH')
+        DEPLOYEMNT_SERVER_CREDENTIAL_ID = 'DEPLOYMENT_CRED_ID'
+        DEPLOYEMENT_HOST = credentials('DEPLOYEMENT_HOST')
+        DEPLOYEMENT_USER = credentials('DEPLOYEMENT_USER')
+        DEPLOYEMNT_DIR = '/opt/tomcat/webapps/ROOT'
+        DEPLOYEMNT_FILE = '/opt/tomcat/webapps/ROOT.war'
+        BACK_UP_DIR = '/root/devops'
+        LATEST_ARTIFACT = './build/libs/SampleWebApp-0.0.1-SNAPSHOT.war'
+    }
+    
+    stages{
+        stage('Cloning deployement repository') {
+            steps {
+                git credentialsId: DEPLOYMENT_REPO_CRED_ID, 
+                    url: DEPLOYMENT_REPO, 
+                    branch: DEPLOYMENT_BRANCH
+            }
+        }
+        stage('Build artifact') {
+            steps{
+                script {
+                    sh 'gradle build'
+                }
+            }
+        }
+        stage('Stop Tomcat on deployment server') {
+            steps {
+                script {
+                    sshagent([DEPLOYEMNT_SERVER_CREDENTIAL_ID]) {
+                        sh "ssh -o StrictHostKeyChecking=no ${DEPLOYEMENT_USER}@${DEPLOYEMENT_HOST}  -tt 'sudo systemctl stop tomcat'"
+                    }
+                }
+            }
+        }
+        stage('Back up old artifacts') {
+            steps {
+                script {
+                    sshagent([DEPLOYEMNT_SERVER_CREDENTIAL_ID]) {
+                        TIME_STAMP = sh(
+                            script: "date +%Y_%m_%d_%mm_%ss",
+                            encoding: "UTF-8",
+                            returnStdout: true
+                            ).trim()
+                        if (sh (script: "ssh -o StrictHostKeyChecking=no ${DEPLOYEMENT_USER}@${DEPLOYEMENT_HOST}  -tt 'sudo [ ! -d ${BACK_UP_DIR} ] && sudo mkdir ${BACK_UP_DIR}'",
+                            returnStatus: true
+                        ).equals(0)) {
+                            echo 'Created Backup directory'
+                        }else {
+                            echo 'Found existing Backup directory'
+                        }
+
+                        if (sh (script: "ssh -o StrictHostKeyChecking=no ${DEPLOYEMENT_USER}@${DEPLOYEMENT_HOST}  -tt 'sudo [ -d ${DEPLOYEMNT_DIR} ] && sudo cp --recursive ${DEPLOYEMNT_DIR} ${BACK_UP_DIR}/ROOT_${TIME_STAMP}'",
+                            returnStatus: true
+                        ).equals(0)) {
+                            echo 'Back up of ROOT directory is completed'
+                        }else {
+                            echo 'ROOT directory not found to backup'
+                        }
+                        
+                        if (sh (script: "ssh -o StrictHostKeyChecking=no ${DEPLOYEMENT_USER}@${DEPLOYEMENT_HOST}  -tt 'sudo [ -f ${DEPLOYEMNT_FILE} ] && sudo cp ${DEPLOYEMNT_FILE} ${BACK_UP_DIR}/ROOT_${TIME_STAMP}.war'",
+                            returnStatus: true
+                        ).equals(0)) {
+                            echo 'Back up of ROOT.war file is completed'
+                        }else {
+                            echo 'ROOT.war file not found to backup'
+                        }
+                    }
+                }
+            }
+        }
+        stage('Deploy latest artifacts'){
+            steps {
+                script {
+                    sshagent([DEPLOYEMNT_SERVER_CREDENTIAL_ID]) {
+                        sh "scp ${LATEST_ARTIFACT} ${DEPLOYEMENT_USER}@${DEPLOYEMENT_HOST}:/tmp/ROOT.war"
+                        sh "ssh -o StrictHostKeyChecking=no ${DEPLOYEMENT_USER}@${DEPLOYEMENT_HOST}  -tt 'sudo mv /tmp/ROOT.war ${DEPLOYEMNT_FILE}'"
+                        sh "ssh -o StrictHostKeyChecking=no ${DEPLOYEMENT_USER}@${DEPLOYEMENT_HOST}  -tt 'sudo rm -rf ${DEPLOYEMNT_DIR}'"
+                    }
+                }
+            }
+        }
+        
+        stage('Start tomcat'){
+            steps {
+                script {
+                    sshagent([DEPLOYEMNT_SERVER_CREDENTIAL_ID]) {
+                        if (sh(script: "ssh -o StrictHostKeyChecking=no ${DEPLOYEMENT_USER}@${DEPLOYEMENT_HOST}  -tt 'sudo systemctl start tomcat'",
+                            returnStatus: true
+                        ).equals(0)) {
+                            echo 'Deployment successful'
+                        }else {
+                            currentBuild.result = "FAILURE"
+                            throw new Exception("Failed deployment: failed to start tomcat")
+                        }
+                    }
+                }
+            }
+        }
+    }
+    post {
+        always {
+            cleanWs()
+        }
+    }
+}
