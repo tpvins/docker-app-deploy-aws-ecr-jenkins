@@ -1,0 +1,107 @@
+pipeline{
+    agent any
+    environment{
+        DEPLOYMENT_REPO_CRED_ID = 'MVN_REPO_SVN_CRED_ID'
+        DEPLOYMENT_REPO = credentials('MVN_DEPLOYMENT_REPO')
+        DEPLOYMENT_BRANCH = credentials('MVN_DEPLOYMENT_BRANCH')
+        DEPLOYEMNT_SERVER_CREDENTIAL_ID = 'DEPLOYMENT_CRED_ID'
+        DEPLOYEMENT_HOST = credentials('DEPLOYEMENT_HOST1')
+        DEPLOYEMENT_USER = credentials('DEPLOYEMENT_USER1')
+        BACK_UP_DIR = '/root/devops'
+        DEPLOYEMNT_FILE_NAME = 'hello-0.0.1-SNAPSHOT'
+        DEPLOYEMNT_FILE = "/opt/spring_war/${DEPLOYEMNT_FILE_NAME}.jar"
+        LATEST_ARTIFACT = "./target/${DEPLOYEMNT_FILE_NAME}.jar"
+        APPLICATION_LOG_PATH = '/opt/spring_war/spring_logs'
+        PID_FOUND_MSG = '"Process is running , killing it"'
+        PID_NOT_FOUND_MSG = '"Process is not running , skipping killing the process"'
+        DEPLOYMENT_SUCCESSFUL_MSG = "Deployment is success"
+        DEPLOYMENT_FAILURE_MSG = "Deployment failed"
+    }
+    stages{
+        
+        stage('Cloning deployment repository') {
+            steps {
+                git credentialsId: DEPLOYMENT_REPO_CRED_ID, 
+                    url: DEPLOYMENT_REPO, 
+                    branch: DEPLOYMENT_BRANCH
+            }
+        }
+        stage('Build artifact') {
+            steps{
+                script {
+                    sh 'mvn install'
+                }
+            }
+        }
+        
+        stage('Stop current deployment') {
+            steps {
+                script {
+                    sshagent([DEPLOYEMNT_SERVER_CREDENTIAL_ID]) {
+                        sh '''ssh -o StrictHostKeyChecking=no ${DEPLOYEMENT_USER}@${DEPLOYEMENT_HOST}  -tt 'if sleep 5 & sudo lsof -Pi :5000 -sTCP:LISTEN -t >/dev/null ; then echo ${PID_FOUND_MSG} ; sudo kill -9 $(sudo lsof -t -i:5000); else echo ${PID_NOT_FOUND_MSG}; fi' '''
+                    }
+                }
+            }
+        }
+        
+        stage('Back up old artifacts') {
+            steps {
+                script {
+                    sshagent([DEPLOYEMNT_SERVER_CREDENTIAL_ID]) {
+                        TIME_STAMP = sh(
+                            script: "date +%Y_%m_%d_%mm_%ss",
+                            encoding: "UTF-8",
+                            returnStdout: true
+                            ).trim()
+                        if (sh (script: "ssh -o StrictHostKeyChecking=no ${DEPLOYEMENT_USER}@${DEPLOYEMENT_HOST}  -tt 'sudo [ ! -d ${BACK_UP_DIR} ] && sudo mkdir ${BACK_UP_DIR}'",
+                            returnStatus: true
+                        ).equals(0)) {
+                            echo 'Created Backup directory'
+                        }else {
+                            echo 'Found existing Backup directory'
+                        }
+
+                        if (sh (script: "ssh -o StrictHostKeyChecking=no ${DEPLOYEMENT_USER}@${DEPLOYEMENT_HOST}  -tt 'sudo [ -f ${DEPLOYEMNT_FILE} ] && sudo cp ${DEPLOYEMNT_FILE} ${BACK_UP_DIR}/${DEPLOYEMNT_FILE_NAME}_${TIME_STAMP}.war'",
+                            returnStatus: true
+                        ).equals(0)) {
+                            echo 'Back up of ROOT.war file is completed'
+                        }else {
+                            echo 'ROOT.war file not found to backup'
+                        }
+                    }
+                }
+            }
+        } 
+        stage('Publish'){
+            steps {
+                script {
+                    sshagent([DEPLOYEMNT_SERVER_CREDENTIAL_ID]) {
+                        sh "scp ${LATEST_ARTIFACT} ${DEPLOYEMENT_USER}@${DEPLOYEMENT_HOST}:/tmp/${DEPLOYEMNT_FILE_NAME}.war"
+                        sh "ssh -o StrictHostKeyChecking=no ${DEPLOYEMENT_USER}@${DEPLOYEMENT_HOST}  -tt 'sudo mv /tmp/${DEPLOYEMNT_FILE_NAME}.war ${DEPLOYEMNT_FILE}'"
+                    }
+                }
+            }
+        }
+        
+        stage('Deploy'){
+            steps {
+                script {
+                    sshagent([DEPLOYEMNT_SERVER_CREDENTIAL_ID]) {
+                        sh '''JENKINS_NODE_COOKIE=dontKillMe ssh -o StrictHostKeyChecking=no -n -f ${DEPLOYEMENT_USER}@${DEPLOYEMENT_HOST}  "JENKINS_NODE_COOKIE=dontKillMe nohup java -jar ${DEPLOYEMNT_FILE} > nohup.out 2>&1 &"'''
+                    }
+                }
+            }
+        }
+        stage('Verification'){
+            steps {
+                script {
+                    sshagent([DEPLOYEMNT_SERVER_CREDENTIAL_ID]) {
+                        sleep 15
+                        sh "ssh -o StrictHostKeyChecking=no ${DEPLOYEMENT_USER}@${DEPLOYEMENT_HOST}  -tt 'if sudo lsof -Pi :5000 -sTCP:LISTEN -t >/dev/null ; then echo ${DEPLOYMENT_SUCCESSFUL_MSG} ; else echo ${DEPLOYMENT_FAILURE_MSG}; exit 1;fi'"
+                    }
+                }
+            }
+        }
+    }
+    
+}
